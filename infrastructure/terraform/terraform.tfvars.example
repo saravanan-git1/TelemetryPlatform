@@ -1,0 +1,13 @@
+aws_region                 = "us-east-1"
+project_name               = "telemetry"
+environment                = "production"
+availability_zone_count    = 2
+vpc_cidr                   = "10.20.0.0/16"
+allowed_ingress_cidrs      = ["203.0.113.10/32"]
+certificate_arn            = "arn:aws:acm:us-east-1:123456789012:certificate/replace-me"
+api_image                  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/telemetry-api:release"
+worker_image               = "123456789012.dkr.ecr.us-east-1.amazonaws.com/telemetry-worker:release"
+telemetry_source_url       = "https://machines.example.internal"
+telemetry_machines         = {
+  "machine-001" = "/api/machines/001/telemetry"
+}

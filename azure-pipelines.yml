@@ -1,0 +1,44 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  buildConfiguration: Release
+
+steps:
+  - task: UseDotNet@2
+    displayName: Install .NET 10 SDK
+    inputs:
+      packageType: sdk
+      version: 10.x
+
+  - script: dotnet restore TelemetryPlatform.sln
+    displayName: Restore
+
+  - script: dotnet build TelemetryPlatform.sln --configuration $(buildConfiguration) --no-restore
+    displayName: Build
+
+  - script: dotnet test TelemetryPlatform.sln --configuration $(buildConfiguration) --no-build --logger trx --results-directory "$(Agent.TempDirectory)/TestResults"
+    displayName: Test
+
+  - task: PublishTestResults@2
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: VSTest
+      testResultsFiles: "**/*.trx"
+      searchFolder: "$(Agent.TempDirectory)/TestResults"
+      failTaskOnFailedTests: true
+
+  - script: |
+      docker build -f Dockerfile.api -t telemetry-platform-api:$(Build.BuildId) .
+      docker build -f Dockerfile.worker -t telemetry-platform-worker:$(Build.BuildId) .
+    displayName: Build container images

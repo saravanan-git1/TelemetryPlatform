@@ -1,0 +1,29 @@
+# .NET
+**/bin/
+**/obj/
+*.user
+*.suo
+.vs/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+
+# Test and tooling output
+TestResults/
+coverage/
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+terraform.tfvars
+*.auto.tfvars
+!*.auto.tfvars.example
+
+# Editors and OS
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store

@@ -1,0 +1,60 @@
+#!/bin/bash
+set -euo pipefail
+exec > >(tee -a /var/log/telemetry-bootstrap.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+dnf install -y docker jq amazon-cloudwatch-agent
+systemctl enable --now docker
+aws ecr get-login-password --region "${aws_region}" | docker login --username AWS --password-stdin "$(echo '${api_image}' | cut -d/ -f1)"
+
+install -d -m 0700 /opt/telemetry
+aws secretsmanager get-secret-value --region "${aws_region}" --secret-id "${secret_arn}" --query SecretString --output text > /opt/telemetry/config.json
+chmod 0600 /opt/telemetry/config.json
+
+POSTGRES_CONNECTION_STRING="$(jq -r '.postgres_connection_string' /opt/telemetry/config.json)"
+REDIS_CONNECTION_STRING="$(jq -r '.redis_connection_string' /opt/telemetry/config.json)"
+TELEMETRY_SOURCE_URL="$(jq -r '.telemetry_source_url // ""' /opt/telemetry/config.json)"
+TELEMETRY_API_KEY="$(jq -r '.telemetry_api_key // ""' /opt/telemetry/config.json)"
+machine_env=()
+while IFS=$'\t' read -r machine_id source_path; do
+  machine_env+=(-e "Telemetry__Machines__$${machine_id}=$${source_path}")
+done < <(jq -r '.telemetry_machines | to_entries[] | "\(.key)\t\(.value)"' /opt/telemetry/config.json)
+
+docker pull "${api_image}"
+docker pull "${worker_image}"
+docker rm -f telemetry-api telemetry-worker || true
+docker run -d --name telemetry-api --restart unless-stopped -p 8080:8080 \
+  -e ASPNETCORE_HTTP_PORTS=8080 \
+  -e ConnectionStrings__Postgres="$POSTGRES_CONNECTION_STRING" \
+  -e Redis__ConnectionString="$REDIS_CONNECTION_STRING" \
+  -e Telemetry__SourceUrl="$TELEMETRY_SOURCE_URL" \
+  -e Telemetry__ApiKey="$TELEMETRY_API_KEY" \
+  "$${machine_env[@]}" \
+  "${api_image}"
+docker run -d --name telemetry-worker --restart unless-stopped \
+  -e ConnectionStrings__Postgres="$POSTGRES_CONNECTION_STRING" \
+  -e Redis__ConnectionString="$REDIS_CONNECTION_STRING" \
+  -e Telemetry__SourceUrl="$TELEMETRY_SOURCE_URL" \
+  -e Telemetry__ApiKey="$TELEMETRY_API_KEY" \
+  "$${machine_env[@]}" \
+  "${worker_image}"
+
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'CW_CONFIG'
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/lib/docker/containers/*/*.log",
+            "log_group_name": "${log_group_name}",
+            "log_stream_name": "{instance_id}",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  }
+}
+CW_CONFIG
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s

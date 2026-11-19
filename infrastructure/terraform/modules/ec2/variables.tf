@@ -1,0 +1,15 @@
+variable "name" { type = string }
+variable "subnet_ids" { type = list(string) }
+variable "security_group_id" { type = string }
+variable "instance_profile_name" { type = string }
+variable "target_group_arns" { type = list(string) }
+variable "instance_type" { type = string }
+variable "min_size" { type = number }
+variable "max_size" { type = number }
+variable "desired_capacity" { type = number }
+variable "api_image" { type = string }
+variable "worker_image" { type = string }
+variable "secret_arn" { type = string }
+variable "log_group_name" { type = string }
+variable "aws_region" { type = string }
+variable "tags" { type = map(string) }

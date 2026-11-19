@@ -1,0 +1,26 @@
+[Unit]
+Description=Telemetry Platform polling worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=telemetry
+Group=telemetry
+WorkingDirectory=/opt/telemetry-platform
+EnvironmentFile=/etc/telemetry-platform/worker.env
+ExecStart=/usr/bin/dotnet /opt/telemetry-platform/TelemetryPlatform.Worker.dll
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/telemetry-platform
+StateDirectory=telemetry-platform
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

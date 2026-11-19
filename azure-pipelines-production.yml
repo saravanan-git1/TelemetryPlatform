@@ -1,0 +1,96 @@
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: telemetry-production
+  - name: buildConfiguration
+    value: Release
+
+jobs:
+  - deployment: DeployProduction
+    displayName: Deploy Telemetry Platform to production
+    environment: telemetry-production
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+
+            - task: UseDotNet@2
+              displayName: Install .NET 10 SDK
+              inputs:
+                packageType: sdk
+                version: 10.x
+
+            - script: dotnet restore TelemetryPlatform.sln
+              displayName: Restore
+
+            - script: dotnet build TelemetryPlatform.sln --configuration $(buildConfiguration) --no-restore
+              displayName: Build
+
+            - script: dotnet test TelemetryPlatform.sln --configuration $(buildConfiguration) --no-build --logger trx --results-directory "$(Agent.TempDirectory)/TestResults"
+              displayName: Test
+
+            - task: PublishTestResults@2
+              condition: succeededOrFailed()
+              inputs:
+                testResultsFormat: VSTest
+                testResultsFiles: "**/*.trx"
+                searchFolder: "$(Agent.TempDirectory)/TestResults"
+                failTaskOnFailedTests: true
+
+            - task: TerraformInstaller@1
+              displayName: Install Terraform
+              inputs:
+                terraformVersion: 1.10.5
+
+            - task: AWSShellScript@1
+              displayName: Build, publish, and deploy to AWS
+              inputs:
+                awsCredentials: $(awsServiceConnection)
+                regionName: $(awsRegion)
+                scriptType: inline
+                inlineScript: |
+                  set -euo pipefail
+                  api_image="${ECR_REGISTRY}/${API_ECR_REPOSITORY}:${BUILD_BUILDID}"
+                  worker_image="${ECR_REGISTRY}/${WORKER_ECR_REPOSITORY}:${BUILD_BUILDID}"
+
+                  aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+                  docker build -f Dockerfile.api -t "${api_image}" .
+                  docker build -f Dockerfile.worker -t "${worker_image}" .
+                  docker push "${api_image}"
+                  docker push "${worker_image}"
+
+                  export TF_VAR_aws_region="${AWS_REGION}"
+                  export TF_VAR_api_image="${api_image}"
+                  export TF_VAR_worker_image="${worker_image}"
+                  export TF_VAR_certificate_arn="${ACM_CERTIFICATE_ARN}"
+                  export TF_VAR_allowed_ingress_cidrs="$(jq -Rn --arg value "${ALLOWED_INGRESS_CIDRS}" '$value | split(",")')"
+                  export TF_VAR_telemetry_source_url="${TELEMETRY_SOURCE_URL}"
+                  export TF_VAR_telemetry_api_key="${TELEMETRY_API_KEY}"
+                  export TF_VAR_telemetry_machines="${TELEMETRY_MACHINES_JSON}"
+
+                  cd infrastructure/terraform
+                  terraform init -input=false \
+                    -backend-config="bucket=${TERRAFORM_STATE_BUCKET}" \
+                    -backend-config="key=${TERRAFORM_STATE_KEY}" \
+                    -backend-config="region=${AWS_REGION}" \
+                    -backend-config="encrypt=true" \
+                    -backend-config="use_lockfile=true"
+                  terraform plan -input=false -out=tfplan
+                  terraform apply -input=false -auto-approve tfplan
+              env:
+                AWS_REGION: $(awsRegion)
+                ECR_REGISTRY: $(ecrRegistry)
+                API_ECR_REPOSITORY: $(apiEcrRepository)
+                WORKER_ECR_REPOSITORY: $(workerEcrRepository)
+                ACM_CERTIFICATE_ARN: $(certificateArn)
+                ALLOWED_INGRESS_CIDRS: $(allowedIngressCidrs)
+                TELEMETRY_SOURCE_URL: $(telemetrySourceUrl)
+                TELEMETRY_API_KEY: $(telemetryApiKey)
+                TELEMETRY_MACHINES_JSON: $(telemetryMachinesJson)
+                TERRAFORM_STATE_BUCKET: $(terraformStateBucket)
+                TERRAFORM_STATE_KEY: $(terraformStateKey)

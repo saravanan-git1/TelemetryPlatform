@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: telemetry
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry -d telemetry"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    env_file:
+      - .env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=telemetry;Username=telemetry;Password=${POSTGRES_PASSWORD:-local-development-only};SSL Mode=Disable
+      Redis__ConnectionString: redis:6379
+      Telemetry__PollIntervalSeconds: ${TELEMETRY_POLL_INTERVAL_SECONDS:-30}
+      Telemetry__SourceUrl: ${TELEMETRY_SOURCE_URL:-}
+      Telemetry__ApiKey: ${TELEMETRY_API_KEY:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - .env
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=telemetry;Username=telemetry;Password=${POSTGRES_PASSWORD:-local-development-only};SSL Mode=Disable
+      Redis__ConnectionString: redis:6379
+      Telemetry__PollIntervalSeconds: ${TELEMETRY_POLL_INTERVAL_SECONDS:-30}
+      Telemetry__SourceUrl: ${TELEMETRY_SOURCE_URL:-}
+      Telemetry__ApiKey: ${TELEMETRY_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
